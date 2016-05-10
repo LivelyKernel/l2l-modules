@@ -9,6 +9,8 @@ import {
   subscribe, unsubscribe
 } from "lively.modules/src/notify.js";
 
+import { sourceOf } from "lively.modules/src/system.js";
+
 import * as modules from "lively.modules";
 
 // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -19,7 +21,7 @@ export {
   parseURL,
   fixL2lURL,
   fsRequest,
-  initialize,
+  install, uninstall,
   getRemoteSubscribers,
   subscribeRemote, unsubscribeRemote
 }
@@ -28,7 +30,7 @@ if (typeof lively !== "undefined") {
   lively.l2lModules = {
     fixL2lURL: fixL2lURL,
     fsRequest: fsRequest,
-    initialize: initialize,
+    install: install,
     subscribeRemote: subscribeRemote,
     unsubscribeRemote: unsubscribeRemote
   }
@@ -39,10 +41,16 @@ if (typeof lively !== "undefined") {
 // setup
 // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-function initialize(System, l2lSession) {
+function install(System, l2lSession) {
   installServices(System, l2lSession);
   prepareSystemForL2lFetch(System);
-  setupRemoteNotifications(System, l2lSession)
+  setupRemoteNotifications(System, l2lSession);
+}
+
+function uninstall(System, l2lSession) {
+  uninstallServices(System, l2lSession);
+  removeL2lFetchHooks(System);
+  unsubscribeFromRemoteNotifications(System, l2lSession);
 }
 
 // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -88,9 +96,13 @@ function setupRemoteNotifications(System, l2lSession) {
   });
 }
 
+function unsubscribeFromRemoteNotifications(System, l2lSession) {
+  unsubscribe(System, undefined, "l2l-modules-remote-notifications");
+}
+
 function getRemoteSubscribers(System) {
-  return modules.System["__l2l-modules__subscribers"]
-      || (modules.System["__l2l-modules__subscribers"] = {});
+  return System["__l2l-modules__subscribers"]
+      || (System["__l2l-modules__subscribers"] = {});
 }
 
 function _localToL2lAddress(System, l2lSession, address) {
@@ -186,6 +198,12 @@ function prepareSystemForL2lFetch(System) {
 
 }
 
+function removeL2lFetchHooks(System) {
+  removeHook(System, "normalize", 'l2lMakeConformantURL');
+  removeHook(System, "normalizeSync", 'l2lMakeConformantURLSync');
+  removeHook(System, "fetch", 'l2lFetch');
+}
+
 // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 // fs interface
 // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -260,7 +278,7 @@ function installServices(System, l2lSession) {
       // FIXME 2: Since the stuff below is async, what if a local normalization
       // request happens while we are doing this here? ...we need a mutex... argh
       return expectData(["path"], msg)
-        .then(data => modules.sourceOf(data.path, data.parent))
+        .then(data => sourceOf(S, data.path, data.parent))
         .then(source => { resetSystem(); session.answer(msg, {source: source}); })
         .catch(err => { resetSystem(); session.answer(msg, {error: String(err.stack || err)}); })
 
@@ -287,7 +305,6 @@ function installServices(System, l2lSession) {
     },
 
     "l2l-modules.onModuleEvent"(msg, session) {
-      debugger;
       var S = msg.data.System ? modules.getSystem(msg.data.System) : System;
       recordModuleEvent(S, msg.data);
       session.answer(msg, {status: "recorded"});
@@ -376,4 +393,16 @@ function installServices(System, l2lSession) {
     }
 
   });
+}
+
+function uninstallServices(System, l2lSession) {
+  delete l2lSession.actions["l2l-modules.fetch"];
+  delete l2lSession.actions["l2l-modules.onModuleEvent"];
+  delete l2lSession.actions["l2l-modules.addSubscriber"];
+  delete l2lSession.actions["l2l-modules.removeSubscriber"];
+  delete l2lSession.actions["l2l-modules.fs.exists"];
+  delete l2lSession.actions["l2l-modules.fs.mkdir"];
+  delete l2lSession.actions["l2l-modules.fs.rm"];
+  delete l2lSession.actions["l2l-modules.fs.write"];
+  delete l2lSession.actions["l2l-modules.fs.read"];
 }
